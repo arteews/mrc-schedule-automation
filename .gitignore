@@ -1,0 +1,45 @@
+# Private configuration and credentials
+.env
+*.env
+!*.env.example
+user.env
+n8n.env
+client_secret*.json
+*credentials*.json
+*token*.json
+*.pem
+*.key
+*.p12
+
+# Telegram sessions, schedules and n8n state
+*.session
+*.session-journal
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+data/
+worker-data/
+backups/
+tmp/
+
+# Source documents and generated output
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.log
+*.tar
+*.tar.gz
+*.zip
+
+# Local development
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+.DS_Store
+Thumbs.db

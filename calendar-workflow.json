@@ -1,0 +1,219 @@
+[
+  {
+    "id": "scheduleCalendar",
+    "name": "Расписание колледжа — Google Календарь",
+    "active": false,
+    "nodes": [
+      {
+        "id": "calendar-webhook",
+        "name": "Обновление расписания",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "webhookId": "calendar-ready",
+        "position": [
+          240,
+          300
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "calendar-ready",
+          "responseMode": "onReceived",
+          "options": {}
+        }
+      },
+      {
+        "id": "calendar-poll",
+        "name": "Забрать задачу календаря",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "http://n8n-schedule-worker:8080/calendar/tick",
+          "options": {
+            "timeout": 30000
+          }
+        }
+      },
+      {
+        "id": "calendar-get",
+        "name": "Найти событие за день",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ 'https://www.googleapis.com/calendar/v3/calendars/primary/events/' + $json.event_id }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleCalendarOAuth2Api",
+          "options": {
+            "timeout": 30000,
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true,
+                "responseFormat": "json"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "calendar-decide",
+        "name": "Подготовить запрос",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const job = $('Забрать задачу календаря').first().json;\nconst status = Number($input.first().json.statusCode);\nif (![200, 404, 410].includes(status)) throw new Error(`Google Calendar lookup failed: HTTP ${status}`);\nconst base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';\nconst method = job.action === 'delete' ? 'DELETE' : (status === 200 ? 'PATCH' : 'POST');\nconst url = method === 'POST' ? base : `${base}/${job.event_id}`;\nconst body = method === 'DELETE' ? null : {\n  ...(method === 'POST' ? {id: job.event_id} : {}),\n  summary: job.summary, description: job.description,\n  start: {dateTime: job.start, timeZone: job.time_zone},\n  end: {dateTime: job.end, timeZone: job.time_zone},\n};\nreturn [{json: {day: job.day, revision: job.revision, method, url, body}}];"
+        }
+      },
+      {
+        "id": "calendar-write",
+        "name": "Создать или обновить событие",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1120,
+          300
+        ],
+        "parameters": {
+          "method": "={{ $json.method }}",
+          "url": "={{ $json.url }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "googleCalendarOAuth2Api",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.body ?? {}) }}",
+          "options": {
+            "timeout": 30000,
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true,
+                "responseFormat": "json"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "calendar-check",
+        "name": "Проверить запись",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1340,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const request = $('Подготовить запрос').first().json;\nconst status = Number($input.first().json.statusCode);\nconst ok = [200, 201, 204].includes(status) || (request.method === 'DELETE' && [404, 410].includes(status));\nif (!ok) throw new Error(`Google Calendar ${request.method} failed: HTTP ${status}`);\nreturn [{json: {day: request.day, revision: request.revision}}];"
+        }
+      },
+      {
+        "id": "calendar-ack",
+        "name": "Отметить синхронизацию",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1560,
+          300
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'http://n8n-schedule-worker:8080/calendar/ack/' + $json.day + '/' + $json.revision }}",
+          "options": {
+            "timeout": 30000
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Обновление расписания": {
+        "main": [
+          [
+            {
+              "node": "Забрать задачу календаря",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Забрать задачу календаря": {
+        "main": [
+          [
+            {
+              "node": "Найти событие за день",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Найти событие за день": {
+        "main": [
+          [
+            {
+              "node": "Подготовить запрос",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Подготовить запрос": {
+        "main": [
+          [
+            {
+              "node": "Создать или обновить событие",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Создать или обновить событие": {
+        "main": [
+          [
+            {
+              "node": "Проверить запись",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Проверить запись": {
+        "main": [
+          [
+            {
+              "node": "Отметить синхронизацию",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "timezone": "Europe/Minsk",
+      "saveDataSuccessExecution": "all",
+      "saveDataErrorExecution": "all",
+      "saveManualExecutions": false,
+      "executionTimeout": 120
+    }
+  }
+]

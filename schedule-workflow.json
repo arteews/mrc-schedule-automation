@@ -1,0 +1,123 @@
+[
+  {
+    "id": "scheduleNotifications",
+    "name": "Расписание колледжа — Telegram",
+    "active": false,
+    "nodes": [
+      {
+        "id": "webhook",
+        "name": "Новое расписание или напоминание",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "webhookId": "schedule-ready",
+        "position": [
+          240,
+          300
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "schedule-ready",
+          "responseMode": "onReceived",
+          "options": {}
+        }
+      },
+      {
+        "id": "poll",
+        "name": "Проверить новые PDF и время пар",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "http://n8n-schedule-worker:8080/tick",
+          "options": {
+            "timeout": 90000
+          }
+        }
+      },
+      {
+        "id": "telegram",
+        "name": "Отправить в Telegram",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          720,
+          300
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "sendMessage",
+          "chatId": "={{ $json.chat_id }}",
+          "text": "={{ $json.text }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "parse_mode": "HTML"
+          }
+        }
+      },
+      {
+        "id": "ack",
+        "name": "Отметить доставку",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          960,
+          300
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ 'http://n8n-schedule-worker:8080/ack/' + $('Проверить новые PDF и время пар').all()[$itemIndex].json.id }}",
+          "options": {
+            "timeout": 30000
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Новое расписание или напоминание": {
+        "main": [
+          [
+            {
+              "node": "Проверить новые PDF и время пар",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Проверить новые PDF и время пар": {
+        "main": [
+          [
+            {
+              "node": "Отправить в Telegram",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Отправить в Telegram": {
+        "main": [
+          [
+            {
+              "node": "Отметить доставку",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "timezone": "Europe/Minsk",
+      "saveDataSuccessExecution": "all",
+      "saveDataErrorExecution": "all",
+      "saveManualExecutions": false,
+      "executionTimeout": 120
+    }
+  }
+]
