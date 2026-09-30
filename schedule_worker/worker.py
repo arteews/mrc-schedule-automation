@@ -452,11 +452,12 @@ def bell_candidates(lessons: list[dict], now: datetime) -> list[tuple[str, str]]
     messages = []
     for start, end in lesson_breaks(lessons):
         for boundary, time_text in (("start", start), ("end", end)):
-            target = datetime.combine(now.date(), datetime.strptime(time_text, "%H:%M").time(), TZ)
+            target = (datetime.combine(now.date(), datetime.strptime(time_text, "%H:%M").time(), TZ)
+                      - timedelta(minutes=3))
             if not target <= now < target + timedelta(seconds=90):
                 continue
-            text = (f"🔔 Звонок! Начался перерыв: {start}–{end}." if boundary == "start"
-                    else f"🔔 Звонок! Перерыв закончился. Занятие начинается в {end}.")
+            text = (f"🔔 Звонок через 3 минуты! Начнётся перерыв: {start}–{end}." if boundary == "start"
+                    else f"🔔 Звонок через 3 минуты! Перерыв закончится. Занятие начинается в {end}.")
             messages.append((f"bell:{day}:{start}:{end}:{boundary}", text))
     return messages
 

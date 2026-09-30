@@ -29,12 +29,17 @@ assert worker.lesson_breaks(school_day) == [
     ("18:15", "18:25"),
 ]
 
-now = datetime(2030, 10, 15, 14, 25, tzinfo=worker.TZ)
+now = datetime(2030, 10, 15, 14, 22, tzinfo=worker.TZ)
+assert worker.bell_candidates(school_day, now - timedelta(seconds=1)) == []
 start = worker.bell_candidates(school_day, now)
-assert len(start) == 1 and "Начался перерыв: 14:25–14:35" in start[0][1]
+assert len(start) == 1 and "Звонок через 3 минуты! Начнётся перерыв: 14:25–14:35" in start[0][1]
+assert worker.bell_candidates(school_day, now + timedelta(seconds=89)) == start
 assert worker.bell_candidates(school_day, now + timedelta(seconds=91)) == []
+assert worker.bell_candidates(school_day, now + timedelta(minutes=3)) == []
 end = worker.bell_candidates(school_day, now + timedelta(minutes=10))
-assert len(end) == 1 and "Перерыв закончился" in end[0][1]
+assert len(end) == 1 and "Звонок через 3 минуты! Перерыв закончится" in end[0][1]
+assert "Занятие начинается в 14:35" in end[0][1]
+assert worker.bell_candidates(school_day, now + timedelta(minutes=13)) == []
 assert start[0][0] != end[0][0]
 
 halves = [
