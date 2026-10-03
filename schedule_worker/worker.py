@@ -104,7 +104,7 @@ def bot_commands():
                 if command not in ("/calendar", "/start"):
                     continue
                 if N8N_CALENDAR_WEBHOOK_URL:
-                    bot_send("✅ Google Календарь подключён. Новое расписание на завтра создаёт одно событие на весь учебный день; изменения обновляют его.")
+                    bot_send("✅ Google Календарь подключён. Новое расписание на любую будущую дату создаёт одно событие на весь учебный день; изменения обновляют его.")
                 else:
                     bot_send("Откройте учётные данные Google Календаря в вашей установке n8n, "
                              "нажмите Sign in with Google и подтвердите доступ к мероприятиям календаря.")
@@ -185,8 +185,23 @@ def lesson_label(lesson: dict) -> str:
     return f"{period}-я пара"
 
 
-def format_tomorrow(schedule: dict, updated: bool = False, changes: list[str] | None = None) -> str:
+def schedule_day_label(day: date, *, relative: bool = True) -> str:
+    if not relative:
+        return f"{day:%d.%m.%Y}"
+    today = datetime.now(TZ).date()
+    if day == today:
+        return "Сегодня"
+    if day == today + timedelta(days=1):
+        return "Завтра"
+    weekdays = ("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")
+    prefix = "Во" if day.weekday() == 1 else "В"
+    return f"{prefix} {weekdays[day.weekday()]} ({day:%d.%m.%Y})"
+
+
+def format_tomorrow(schedule: dict, updated: bool = False, changes: list[str] | None = None,
+                    *, relative: bool = True) -> str:
     day = date.fromisoformat(schedule["date"])
+    day_label = schedule_day_label(day, relative=relative)
     heading = "🔄 Обновлено расписание" if updated else "📢 Появилось расписание"
     lines = [f"{heading} на {day:%d.%m.%Y}!", f"Группа {schedule.get('group', GROUP)}"]
     if changes:
@@ -194,10 +209,10 @@ def format_tomorrow(schedule: dict, updated: bool = False, changes: list[str] | 
         lines.append("")
     lessons = schedule["lessons"]
     if not lessons:
-        return "\n".join(lines + ["Завтра занятий нет."])
+        return "\n".join(lines + [f"{day_label} занятий нет."])
     first = min(lessons, key=lambda lesson: lesson["start"])
-    arrival = (f"Завтра начало в {first['start']}." if is_practice(first)
-               else f"Завтра к {first['period']}-й паре, начало в {first['start']}.")
+    arrival = (f"{day_label} начало в {first['start']}." if is_practice(first)
+               else f"{day_label} к {first['period']}-й паре, начало в {first['start']}.")
     lines += [arrival, "", "Расписание:"]
     for lesson in lessons:
         room, teacher = lesson_details(lesson)
@@ -228,6 +243,7 @@ def format_tomorrow_html(schedule: dict, updated: bool = False, changes: list[st
     """Telegram HTML with bold lessons, italic times, and quoted room/teacher."""
     esc = html.escape
     day = date.fromisoformat(schedule["date"])
+    day_label = schedule_day_label(day)
     heading = "🔄 Обновлено расписание" if updated else "📢 Появилось расписание"
     lines = [f"<b>{heading} на {day:%d.%m.%Y}!</b>",
              f"<b>Группа {esc(str(schedule.get('group', GROUP)))}</b>"]
@@ -236,10 +252,10 @@ def format_tomorrow_html(schedule: dict, updated: bool = False, changes: list[st
         lines.append("")
     lessons = schedule["lessons"]
     if not lessons:
-        return "\n".join(lines + ["<b>Завтра занятий нет.</b>"])
+        return "\n".join(lines + [f"<b>{esc(day_label)} занятий нет.</b>"])
     first = min(lessons, key=lambda lesson: lesson["start"])
-    arrival = (f"Завтра начало в {first['start']}." if is_practice(first)
-               else f"Завтра к {first['period']}-й паре, начало в {first['start']}.")
+    arrival = (f"{day_label} начало в {first['start']}." if is_practice(first)
+               else f"{day_label} к {first['period']}-й паре, начало в {first['start']}.")
     lines += [f"<b>{esc(arrival)}</b>", "", "<b>Расписание:</b>"]
     for lesson in lessons:
         room, teacher = lesson_details(lesson)
@@ -282,7 +298,7 @@ def calendar_payload(schedule: dict) -> dict:
         end = datetime.combine(date.fromisoformat(day), datetime.strptime(last["end"], "%H:%M").time(), TZ)
         payload.update({
             "summary": f"Учёба {group} — {date.fromisoformat(day):%d.%m.%Y}",
-            "description": format_tomorrow(schedule),
+            "description": format_tomorrow(schedule, relative=False),
             "start": start.isoformat(),
             "end": end.isoformat(),
             "time_zone": "Europe/Minsk",
@@ -303,11 +319,12 @@ def queue_calendar(schedule: dict):
     WAKE.set()
 
 
-def seed_tomorrow_calendar():
-    tomorrow = (datetime.now(TZ).date() + timedelta(days=1)).isoformat()
+def seed_future_calendar():
+    """Recover calendar jobs for saved current and future schedules, even after restart."""
+    today = datetime.now(TZ).date().isoformat()
     with connect() as db:
-        row = db.execute("SELECT payload FROM schedules WHERE day=?", (tomorrow,)).fetchone()
-    if row:
+        rows = db.execute("SELECT payload FROM schedules WHERE day>=? ORDER BY day", (today,)).fetchall()
+    for row in rows:
         queue_calendar(json.loads(row["payload"]))
 
 
@@ -385,10 +402,10 @@ def process_one_pdf():
             changed = not previous or notification_signature(previous) != notification_digest
             db.execute("INSERT INTO schedules(day,content_hash,payload) VALUES(?,?,?) ON CONFLICT(day) DO UPDATE SET content_hash=excluded.content_hash,payload=excluded.payload", (parsed["date"], digest, payload))
             db.execute("UPDATE documents SET status='done',error=NULL WHERE message_id=?", (row["message_id"],))
-        tomorrow = (datetime.now(TZ).date() + timedelta(days=1)).isoformat()
-        if changed and parsed["date"] == tomorrow:
+        today = datetime.now(TZ).date().isoformat()
+        if changed and parsed["date"] >= today:
             changes = describe_changes(previous, parsed) if previous else None
-            queue_message(f"tomorrow:{tomorrow}:{row['message_id']}",
+            queue_message(f"schedule:{parsed['date']}:{row['message_id']}",
                           format_tomorrow_html(parsed, updated=bool(old), changes=changes), rich=True)
             queue_calendar(parsed)
         logging.info("Parsed %s: %s lessons, changed=%s", row["filename"], len(parsed["lessons"]), changed)
@@ -490,7 +507,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         if self.path == "/calendar/tick":
-            seed_tomorrow_calendar()
+            seed_future_calendar()
             today = datetime.now(TZ).date().isoformat()
             with connect() as db:
                 row = db.execute("""SELECT day,revision,payload FROM calendar_jobs
@@ -606,7 +623,7 @@ def scheduler():
                     response.read()
                 last_dispatch = time.monotonic()
                 last_pending_id = pending
-            seed_tomorrow_calendar()
+            seed_future_calendar()
             today = datetime.now(TZ).date().isoformat()
             with connect() as db:
                 calendar = db.execute("""SELECT day,revision FROM calendar_jobs
